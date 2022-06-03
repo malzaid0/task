@@ -20,11 +20,13 @@ from django.urls import path
 urlpatterns = [
     path('admin/', admin.site.urls),
 
-    path('register/merchant/', views.RegisterMerchant.as_view()),
-    path('register/customer/', views.RegisterCustomer.as_view()),
     path('login/', views.MyTokenObtainPairView.as_view()),
-    path('test/', views.Test.as_view()),
 
+    path('customer/register/', views.RegisterCustomer.as_view()),
+    path('customer/cart/', views.GetCart.as_view()),
+    path('customer/cart/add/', views.AddToCart.as_view()),
+
+    path('merchant/register/', views.RegisterMerchant.as_view()),
     path('merchant/update-info/', views.UpdateSettings.as_view()),
     path('merchant/add-product/', views.CreateProduct.as_view()),
 ]

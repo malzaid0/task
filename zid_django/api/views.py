@@ -1,13 +1,12 @@
-from rest_framework.generics import ListAPIView, CreateAPIView, RetrieveAPIView, ListCreateAPIView, \
-    RetrieveUpdateAPIView
+from rest_framework.generics import CreateAPIView, RetrieveAPIView, RetrieveUpdateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from .models import MerchantSetting
-from .permissions import IsMerchant
+from .models import MerchantSetting, Cart
+from .permissions import IsMerchant, IsCustomer
 from .serializers import (
-    RegisterMerchantSerializer, RegisterCustomerSerializer, MyTokenObtainPairSerializer, TestSerializer,
-    UpdateSettingsSerializer, CreateProductSerializer
+    RegisterMerchantSerializer, RegisterCustomerSerializer, MyTokenObtainPairSerializer, UpdateSettingsSerializer,
+    CreateProductSerializer, CartSerializer, AddToCartSerializer
 )
 
 
@@ -21,10 +20,6 @@ class RegisterCustomer(CreateAPIView):
 
 class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = MyTokenObtainPairSerializer
-
-
-class Test(CreateAPIView):
-    serializer_class = TestSerializer
 
 
 class UpdateSettings(RetrieveUpdateAPIView):
@@ -45,3 +40,21 @@ class UpdateSettings(RetrieveUpdateAPIView):
 class CreateProduct(CreateAPIView):
     serializer_class = CreateProductSerializer
     permission_classes = [IsAuthenticated, IsMerchant]
+
+
+class GetCart(RetrieveAPIView):
+    queryset = Cart.objects.all()
+    serializer_class = CartSerializer
+    permission_classes = [IsAuthenticated, IsCustomer]
+
+    def get_object(self):
+        customer = self.request.user.customer_obj
+        cart = customer.carts.filter(is_paid=False).last()
+        if cart:
+            return cart
+        return Cart.objects.create(customer=customer)
+
+
+class AddToCart(CreateAPIView):
+    serializer_class = AddToCartSerializer
+    permission_classes = [IsAuthenticated, IsCustomer]

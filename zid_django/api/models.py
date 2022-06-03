@@ -47,10 +47,11 @@ class ProductLangInfo(models.Model):
 
 class Cart(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.RESTRICT, related_name="carts")
+    is_paid = models.BooleanField(default=False)
     date_created = models.DateTimeField(auto_now_add=True)
 
 
-class CartItems(models.Model):
+class CartItem(models.Model):
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name="items")
     item = models.ForeignKey(Product, on_delete=models.RESTRICT)
     quantity = models.PositiveSmallIntegerField()

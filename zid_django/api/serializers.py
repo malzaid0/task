@@ -3,9 +3,8 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
-from .models import Merchant, Customer, MerchantSetting, Product, Language, ProductLangInfo
+from .models import Merchant, Customer, MerchantSetting, Product, Language, ProductLangInfo, Cart, CartItem
 
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -85,19 +84,6 @@ class RegisterCustomerSerializer(serializers.ModelSerializer):
         return validated_data
 
 
-class TestSerializer(serializers.ModelSerializer):
-    token = serializers.CharField(read_only=True)
-
-    class Meta:
-        model = User
-        fields = ["token"]
-
-    def create(self, validated_data):
-        tok = RefreshToken.for_user(User.objects.last())
-        validated_data["token"] = tok.access_token
-        return validated_data
-
-
 class UpdateSettingsSerializer(serializers.ModelSerializer):
     store_name = serializers.CharField(min_length=2)
     shipping_cost = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=False, min_value=0)
@@ -105,6 +91,10 @@ class UpdateSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = MerchantSetting
         fields = ["store_name", "price_include_vat", "vat_percentage", "shipping_cost"]
+        extra_kwargs = {
+            "price_include_vat": {"required": True},
+            "vat_percentage": {"required": True},
+        }
 
     def validate(self, attrs):
         if not attrs["price_include_vat"] and not attrs["vat_percentage"]:
@@ -114,12 +104,11 @@ class UpdateSettingsSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         merchant = self.context["request"].user.merchant_obj
-        if validated_data["store_name"] != merchant.store_name:
-            merchant.store_name = validated_data["store_name"]
-            merchant.save()
+        merchant.store_name = validated_data.get("store_name", merchant.store_name)
+        merchant.save()
         instance.price_include_vat = validated_data["price_include_vat"]
         instance.vat_percentage = validated_data["vat_percentage"] if not validated_data["price_include_vat"] else 0
-        instance.shipping_cost = ["shipping_cost"]
+        instance.shipping_cost = validated_data["shipping_cost"]
         instance.save()
         return validated_data
 
@@ -135,21 +124,112 @@ class OtherLanguagesSerializer(serializers.Serializer):
         return value
 
 
-class CreateProductSerializer(serializers.ModelSerializer):
-    other_languages = OtherLanguagesSerializer(many=True)
+class ProductSerializer(serializers.ModelSerializer):
+    internationals = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
-        fields = ["title", "description", "price", "inventory", "other_languages"]
+        exclude = ["seller"]
+
+    def get_internationals(self, obj):
+        values = []
+        for info in obj.internationals.all():
+            values.append({
+                "language": info.language.abbreviation,
+                "title": info.title,
+                "description": info.description
+            })
+        return values
+
+
+class CreateProductSerializer(serializers.ModelSerializer):
+    internationals = OtherLanguagesSerializer(many=True, write_only=True)
+
+    class Meta:
+        model = Product
+        fields = ["title", "description", "price", "inventory", "internationals"]
+        extra_kwargs = {
+            "description": {"required": True}
+        }
 
     def create(self, validated_data):
         merchant = self.context["request"].user.merchant_obj
-        other_languages = validated_data.pop("other_languages")
+        other_languages = validated_data.pop("internationals")
         new_product = Product.objects.create(seller=merchant, **validated_data)
         for info in other_languages:
-            info_dict = dict(info)
-            print(info, info_dict)
-            lang_name = info_dict.pop("language")
+            lang_name = info.pop("language")
             language = Language.objects.filter(abbreviation__iexact=lang_name).last()
-            ProductLangInfo.objects.create(language=language, product=new_product, **info_dict)
-        return validated_data
+            ProductLangInfo.objects.create(language=language, product=new_product, **info)
+        return new_product
+
+    def to_representation(self, instance):
+        return ProductSerializer(instance).data
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    item = ProductSerializer()
+
+    class Meta:
+        model = CartItem
+        fields = ["item", "quantity"]
+
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True)
+    totals = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Cart
+        exclude = ["is_paid", "customer"]
+
+    def get_totals(self, obj):
+        total_no_vat = 0
+        vat = 0
+        cart_items = obj.items.all()
+        shipping = 0
+        if cart_items:
+            store_settings = cart_items[0].item.seller.settings.last()
+            shipping = float(store_settings.shipping_cost) if store_settings.shipping_cost else 0
+            for cart_item in cart_items:
+                item_qty_total = float(cart_item.item.price * cart_item.quantity)
+                if store_settings.price_include_vat:
+                    current = item_qty_total / 1.15
+                    total_no_vat += current
+                    vat += item_qty_total - current
+                else:
+                    total_no_vat += item_qty_total
+                    vat += item_qty_total * (float(store_settings.vat_percentage) / 100)
+        return {
+            "total_no_vat": float(str(round(total_no_vat, 2))),
+            "vat": float(str(round(vat, 2))),
+            "shipping": shipping,
+            "total": total_no_vat + vat + shipping
+        }
+
+
+class AddToCartSerializer(serializers.ModelSerializer):
+    quantity = serializers.IntegerField(min_value=1)
+
+    class Meta:
+        model = CartItem
+        fields = ["item", "quantity"]
+
+    def validate(self, attrs):
+        if attrs["item"].inventory < attrs["quantity"]:
+            raise serializers.ValidationError({"quantity": "not enough inventory"})
+        return attrs
+
+    def create(self, validated_data):
+        customer = self.context["request"].user.customer_obj
+        cart, _ = Cart.objects.get_or_create(customer=customer, is_paid=False)
+        current = CartItem.objects.filter(cart=cart, item=validated_data["item"]).last()
+        if current:
+            current.quantity = validated_data["quantity"]
+            current.save()
+            return current
+        else:
+            new_cart_item = CartItem.objects.create(cart=cart, **validated_data)
+            return new_cart_item
+
+    def to_representation(self, instance):
+        return CartSerializer(instance.cart).data
