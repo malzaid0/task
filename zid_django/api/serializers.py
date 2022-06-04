@@ -52,10 +52,11 @@ class RegisterCustomerSerializer(serializers.ModelSerializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
     access_token = serializers.CharField(read_only=True)
+    name = serializers.CharField(min_length=2, max_length=100, allow_null=False, allow_blank=False)
 
     class Meta:
         model = Customer
-        fields = ["phone", "email", "password", "access_token"]
+        fields = ["phone", "email", "password", "access_token", "name"]
 
     def validate_phone(self, value):
         phone = f"+966{value[-9:]}"
@@ -76,7 +77,11 @@ class RegisterCustomerSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        new_user = User(username=validated_data["email"], email=validated_data["email"])
+        new_user = User(
+            username=validated_data["email"],
+            email=validated_data["email"],
+            first_name=validated_data["name"]
+        )
         new_user.set_password(validated_data["password"])
         new_user.save()
         Customer.objects.create(user=new_user, phone=validated_data["phone"])
@@ -188,7 +193,11 @@ class CartSerializer(serializers.ModelSerializer):
         cart_items = obj.items.all()
         shipping = 0
         if cart_items:
-            store_settings = cart_items[0].item.seller.settings.last()
+            merchant = cart_items[0].item.seller
+            store_settings = merchant.settings.last()
+            if not store_settings:
+                store_settings = MerchantSetting.objects.create(merchant=merchant, price_include_vat=True,
+                                                                vat_percentage=0, shipping_cost=0)
             shipping = float(store_settings.shipping_cost) if store_settings.shipping_cost else 0
             for cart_item in cart_items:
                 item_qty_total = float(cart_item.item.price * cart_item.quantity)
