@@ -6,6 +6,8 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\MerchantController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\MerchantSettingController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\CartController;
 
 /*
 |--------------------------------------------------------------------------
@@ -27,10 +29,13 @@ Route::post("/signup", [AuthController::class, "signup"]);
 
 Route::prefix("merchant")->group(function () {
     Route::post("/register", [MerchantController::class, "create"]);
-    Route::put("/update-info", [MerchantSettingController::class, "create"])->middleware("auth:sanctum");
+    Route::put("/update-info", [MerchantSettingController::class, "create"])->middleware(["auth:sanctum", "is.merchant"]);
+    Route::post("/add-product", [ProductController::class, "create"])->middleware(["auth:sanctum", "is.merchant"]);
 });
 
 Route::prefix("customer")->group(function () {
     Route::post("/register", [CustomerController::class, "create"]);
+    Route::post("/cart/add", [CartController::class, "create"])->middleware(["auth:sanctum", "is.customer"]);
+    Route::get("/cart", [CartController::class, "show"])->middleware(["auth:sanctum", "is.customer"]);
 });
 

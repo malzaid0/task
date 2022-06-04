@@ -36,7 +36,7 @@ class MerchantSettingController extends Controller
 
         $user_id = $request->user()->id;
 
-        $merchant = Merchant::find($user_id);
+        $merchant = Merchant::firstWhere("user_id", $user_id);
         $merchant->store_name = $request->store_name;
         $merchant->save();
 
